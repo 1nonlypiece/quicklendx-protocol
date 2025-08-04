@@ -1,5 +1,6 @@
 use soroban_sdk::{contracttype, symbol_short, vec, Address, Env, String, Symbol, Vec};
 use crate::errors::QuickLendXError;
+use crate::invoice::InvoiceCategory;
 
 #[contracttype]
 pub enum BusinessVerificationStatus {
@@ -335,4 +336,36 @@ fn emit_business_rejected(env: &Env, business: &Address, admin: &Address) {
         (symbol_short!("bus_rej"),),
         (business.clone(), admin.clone(), env.ledger().timestamp()),
     );
+}
+
+/// Validate invoice category
+pub fn validate_invoice_category(category: &InvoiceCategory) -> Result<(), QuickLendXError> {
+    // All categories in the enum are valid by default
+    // This function can be extended to add additional validation logic
+    match category {
+        InvoiceCategory::Services => Ok(()),
+        InvoiceCategory::Products => Ok(()),
+        InvoiceCategory::Consulting => Ok(()),
+        InvoiceCategory::Manufacturing => Ok(()),
+        InvoiceCategory::Technology => Ok(()),
+        InvoiceCategory::Healthcare => Ok(()),
+        InvoiceCategory::Other => Ok(()),
+    }
+}
+
+/// Validate invoice tags
+pub fn validate_invoice_tags(tags: &Vec<String>) -> Result<(), QuickLendXError> {
+    // Check tag count limit
+    if tags.len() > 10 {
+        return Err(QuickLendXError::TagLimitExceeded);
+    }
+
+    // Validate each tag
+    for tag in tags.iter() {
+        if tag.len() == 0 || tag.len() > 50 {
+            return Err(QuickLendXError::InvalidTag);
+        }
+    }
+
+    Ok(())
 }
