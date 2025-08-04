@@ -174,3 +174,53 @@ pub fn emit_audit_query(env: &Env, query_type: String, result_count: u32) {
         (query_type, result_count, env.ledger().timestamp()),
     );
 }
+
+/// Emit event when invoice category is updated
+pub fn emit_invoice_category_updated(
+    env: &Env,
+    invoice_id: &BytesN<32>,
+    old_category: &crate::invoice::InvoiceCategory,
+    new_category: &crate::invoice::InvoiceCategory,
+) {
+    env.events().publish(
+        (symbol_short!("inv_cat"),),
+        (
+            invoice_id.clone(),
+            old_category.clone(),
+            new_category.clone(),
+            env.ledger().timestamp(),
+        ),
+    );
+}
+
+/// Emit event when tag is added to invoice
+pub fn emit_invoice_tag_added(
+    env: &Env,
+    invoice_id: &BytesN<32>,
+    tag: &String,
+) {
+    env.events().publish(
+        (symbol_short!("tag_add"),),
+        (
+            invoice_id.clone(),
+            tag.clone(),
+            env.ledger().timestamp(),
+        ),
+    );
+}
+
+/// Emit event when tag is removed from invoice
+pub fn emit_invoice_tag_removed(
+    env: &Env,
+    invoice_id: &BytesN<32>,
+    tag: &String,
+) {
+    env.events().publish(
+        (symbol_short!("tag_rm"),),
+        (
+            invoice_id.clone(),
+            tag.clone(),
+            env.ledger().timestamp(),
+        ),
+    );
+}
