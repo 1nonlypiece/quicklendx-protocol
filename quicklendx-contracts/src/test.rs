@@ -7,6 +7,7 @@ use soroban_sdk::{
 use crate::audit::{
     AuditStorage, AuditQueryFilter, AuditOperation, AuditOperationFilter, log_invoice_operation
 };
+use crate::invoice::InvoiceCategory;
 
 #[test]
 fn test_store_invoice() {
@@ -19,8 +20,10 @@ fn test_store_invoice() {
     let amount = 1000;
     let due_date = env.ledger().timestamp() + 86400; // 1 day from now
     let description = String::from_str(&env, "Test invoice for services");
+    let category = InvoiceCategory::Services;
+    let tags = vec![&env, String::from_str(&env, "consulting"), String::from_str(&env, "urgent")];
 
-    let invoice_id = client.store_invoice(&business, &amount, &currency, &due_date, &description);
+    let invoice_id = client.store_invoice(&business, &amount, &currency, &due_date, &description, &category, &tags);
 
     // Verify invoice was stored
     let invoice = client.get_invoice(&invoice_id);
@@ -29,6 +32,8 @@ fn test_store_invoice() {
     assert_eq!(invoice.currency, currency);
     assert_eq!(invoice.due_date, due_date);
     assert_eq!(invoice.description, description);
+    assert_eq!(invoice.category, category);
+    assert_eq!(invoice.tags.len(), 2);
     assert_eq!(invoice.status, InvoiceStatus::Pending);
     assert_eq!(invoice.funded_amount, 0);
     assert!(invoice.investor.is_none());
@@ -43,6 +48,8 @@ fn test_store_invoice_validation() {
     let business = Address::generate(&env);
     let currency = Address::generate(&env);
     let due_date = env.ledger().timestamp() + 86400;
+    let category = InvoiceCategory::Products;
+    let tags = vec![&env, String::from_str(&env, "electronics")];
 
     // Test valid invoice creation
     let invoice_id = client.store_invoice(
@@ -51,12 +58,15 @@ fn test_store_invoice_validation() {
         &currency,
         &due_date,
         &String::from_str(&env, "Valid invoice"),
+        &category,
+        &tags,
     );
 
     // Verify invoice was created
     let invoice = client.get_invoice(&invoice_id);
     assert_eq!(invoice.amount, 1000);
     assert_eq!(invoice.business, business);
+    assert_eq!(invoice.category, category);
 }
 
 #[test]
@@ -77,6 +87,8 @@ fn test_get_business_invoices() {
         &currency,
         &due_date,
         &String::from_str(&env, "Invoice 1"),
+        &InvoiceCategory::Services,
+        &vec![&env, String::from_str(&env, "consulting")],
     );
 
     let invoice2_id = client.store_invoice(
@@ -85,6 +97,8 @@ fn test_get_business_invoices() {
         &currency,
         &due_date,
         &String::from_str(&env, "Invoice 2"),
+        &InvoiceCategory::Products,
+        &vec![&env, String::from_str(&env, "electronics")],
     );
 
     // Create invoice for business2
@@ -94,6 +108,8 @@ fn test_get_business_invoices() {
         &currency,
         &due_date,
         &String::from_str(&env, "Invoice 3"),
+        &InvoiceCategory::Technology,
+        &vec![&env, String::from_str(&env, "software")],
     );
 
     // Get invoices for business1
@@ -1141,7 +1157,7 @@ fn test_upload_invoice_requires_verification() {
 
     // Now try to upload invoice - should succeed
     env.mock_all_auths();
-    let _invoice_id = client.upload_invoice(&business, &amount, &currency, &due_date, &description);
+    let _invoice_id = client.upload_invoice(&business, &amount, &currency, &due_date, &description, &InvoiceCategory::Services, &vec![&env, String::from_str(&env, "test")]);
 }
 
 #[test]
@@ -1463,7 +1479,7 @@ fn test_audit_trail_creation() {
     let description = String::from_str(&env, "Test invoice");
     
     // Upload invoice
-    let invoice_id = client.upload_invoice(&business, &amount, &currency, &due_date, &description);
+    let invoice_id = client.upload_invoice(&business, &amount, &currency, &due_date, &description, &InvoiceCategory::Services, &vec![&env, String::from_str(&env, "test")]);
     
     // Check audit trail was created
     let audit_trail = client.get_invoice_audit_trail(&invoice_id);
@@ -1489,7 +1505,7 @@ fn test_audit_integrity_validation() {
     let description = String::from_str(&env, "Test invoice");
     
     // Upload and verify invoice
-    let invoice_id = client.upload_invoice(&business, &amount, &currency, &due_date, &description);
+    let invoice_id = client.upload_invoice(&business, &amount, &currency, &due_date, &description, &InvoiceCategory::Services, &vec![&env, String::from_str(&env, "test")]);
     client.verify_invoice(&invoice_id);
     
     // Validate audit integrity
@@ -1510,9 +1526,9 @@ fn test_audit_query_functionality() {
     let description = String::from_str(&env, "Test invoice");
     
     // Create multiple invoices
-    let invoice_id1 = client.upload_invoice(&business, &amount, &currency, &due_date, &description);
+    let invoice_id1 = client.upload_invoice(&business, &amount, &currency, &due_date, &description, &InvoiceCategory::Services, &vec![&env, String::from_str(&env, "test")]);
     let amount2 = amount * 2;
-    let invoice_id2 = client.upload_invoice(&business, &amount2, &currency, &due_date, &description);
+    let invoice_id2 = client.upload_invoice(&business, &amount2, &currency, &due_date, &description, &InvoiceCategory::Services, &vec![&env, String::from_str(&env, "test")]);
     
     // Query by operation type
     let filter = AuditQueryFilter {
@@ -1553,11 +1569,371 @@ fn test_audit_statistics() {
     let description = String::from_str(&env, "Test invoice");
     
     // Create and process invoices
-    let invoice_id = client.upload_invoice(&business, &amount, &currency, &due_date, &description);
+    let invoice_id = client.upload_invoice(&business, &amount, &currency, &due_date, &description, &InvoiceCategory::Services, &vec![&env, String::from_str(&env, "test")]);
     client.verify_invoice(&invoice_id);
     
     // Get audit statistics
     let stats = client.get_audit_stats();
     assert!(stats.total_entries > 0);
     assert!(stats.unique_actors > 0);
+}
+
+// Category and Tag Tests
+
+#[test]
+fn test_invoice_categories() {
+    let env = Env::default();
+    let contract_id = env.register_contract(None, QuickLendXContract);
+    let client = QuickLendXContractClient::new(&env, &contract_id);
+
+    let business = Address::generate(&env);
+    let currency = Address::generate(&env);
+    let due_date = env.ledger().timestamp() + 86400;
+    let tags = vec![&env, String::from_str(&env, "test")];
+
+    // Test all categories
+    let categories = [
+        InvoiceCategory::Services,
+        InvoiceCategory::Products,
+        InvoiceCategory::Consulting,
+        InvoiceCategory::Manufacturing,
+        InvoiceCategory::Technology,
+        InvoiceCategory::Healthcare,
+        InvoiceCategory::Other,
+    ];
+
+    for category in categories.iter() {
+        let invoice_id = client.store_invoice(
+            &business,
+            &1000,
+            &currency,
+            &due_date,
+            &String::from_str(&env, "Test invoice"),
+            category,
+            &tags,
+        );
+
+        let invoice = client.get_invoice(&invoice_id);
+        assert_eq!(invoice.category, *category);
+    }
+}
+
+#[test]
+fn test_get_invoices_by_category() {
+    let env = Env::default();
+    let contract_id = env.register_contract(None, QuickLendXContract);
+    let client = QuickLendXContractClient::new(&env, &contract_id);
+
+    let business1 = Address::generate(&env);
+    let business2 = Address::generate(&env);
+    let currency = Address::generate(&env);
+    let due_date = env.ledger().timestamp() + 86400;
+    let tags = vec![&env, String::from_str(&env, "test")];
+
+    // Create invoices with different categories
+    client.store_invoice(
+        &business1,
+        &1000,
+        &currency,
+        &due_date,
+        &String::from_str(&env, "Services invoice"),
+        &InvoiceCategory::Services,
+        &tags,
+    );
+
+    client.store_invoice(
+        &business2,
+        &2000,
+        &currency,
+        &due_date,
+        &String::from_str(&env, "Products invoice"),
+        &InvoiceCategory::Products,
+        &tags,
+    );
+
+    client.store_invoice(
+        &business1,
+        &3000,
+        &currency,
+        &due_date,
+        &String::from_str(&env, "Another services invoice"),
+        &InvoiceCategory::Services,
+        &tags,
+    );
+
+    // Get invoices by category
+    let services_invoices = client.get_invoices_by_category(&InvoiceCategory::Services);
+    let products_invoices = client.get_invoices_by_category(&InvoiceCategory::Products);
+
+    assert_eq!(services_invoices.len(), 2);
+    assert_eq!(products_invoices.len(), 1);
+}
+
+#[test]
+fn test_invoice_tags() {
+    let env = Env::default();
+    let contract_id = env.register_contract(None, QuickLendXContract);
+    let client = QuickLendXContractClient::new(&env, &contract_id);
+
+    let business = Address::generate(&env);
+    let currency = Address::generate(&env);
+    let due_date = env.ledger().timestamp() + 86400;
+    let category = InvoiceCategory::Services;
+
+    // Create invoice with tags
+    let tags = vec![&env, String::from_str(&env, "urgent"), String::from_str(&env, "consulting")];
+    let invoice_id = client.store_invoice(
+        &business,
+        &1000,
+        &currency,
+        &due_date,
+        &String::from_str(&env, "Test invoice"),
+        &category,
+        &tags,
+    );
+
+    // Verify tags
+    let invoice = client.get_invoice(&invoice_id);
+    assert_eq!(invoice.tags.len(), 2);
+    assert!(client.invoice_has_tag(&invoice_id, &String::from_str(&env, "urgent")).unwrap());
+    assert!(client.invoice_has_tag(&invoice_id, &String::from_str(&env, "consulting")).unwrap());
+    assert!(!client.invoice_has_tag(&invoice_id, &String::from_str(&env, "nonexistent")).unwrap());
+}
+
+#[test]
+fn test_add_remove_tags() {
+    let env = Env::default();
+    let contract_id = env.register_contract(None, QuickLendXContract);
+    let client = QuickLendXContractClient::new(&env, &contract_id);
+
+    let business = Address::generate(&env);
+    let currency = Address::generate(&env);
+    let due_date = env.ledger().timestamp() + 86400;
+    let category = InvoiceCategory::Technology;
+    let initial_tags = vec![&env, String::from_str(&env, "software")];
+
+    // Create invoice
+    let invoice_id = client.store_invoice(
+        &business,
+        &1000,
+        &currency,
+        &due_date,
+        &String::from_str(&env, "Test invoice"),
+        &category,
+        &initial_tags,
+    );
+
+    // Add tag
+    client.add_invoice_tag(&invoice_id, &String::from_str(&env, "urgent"));
+    assert!(client.invoice_has_tag(&invoice_id, &String::from_str(&env, "urgent")).unwrap());
+
+    // Remove tag
+    client.remove_invoice_tag(&invoice_id, &String::from_str(&env, "software"));
+    assert!(!client.invoice_has_tag(&invoice_id, &String::from_str(&env, "software")).unwrap());
+    assert!(client.invoice_has_tag(&invoice_id, &String::from_str(&env, "urgent")).unwrap());
+}
+
+#[test]
+fn test_update_category() {
+    let env = Env::default();
+    let contract_id = env.register_contract(None, QuickLendXContract);
+    let client = QuickLendXContractClient::new(&env, &contract_id);
+
+    let business = Address::generate(&env);
+    let currency = Address::generate(&env);
+    let due_date = env.ledger().timestamp() + 86400;
+    let initial_category = InvoiceCategory::Services;
+    let tags = vec![&env, String::from_str(&env, "test")];
+
+    // Create invoice
+    let invoice_id = client.store_invoice(
+        &business,
+        &1000,
+        &currency,
+        &due_date,
+        &String::from_str(&env, "Test invoice"),
+        &initial_category,
+        &tags,
+    );
+
+    // Update category
+    let new_category = InvoiceCategory::Technology;
+    client.update_invoice_category(&invoice_id, &new_category);
+
+    let invoice = client.get_invoice(&invoice_id);
+    assert_eq!(invoice.category, new_category);
+}
+
+#[test]
+fn test_get_invoices_by_tag() {
+    let env = Env::default();
+    let contract_id = env.register_contract(None, QuickLendXContract);
+    let client = QuickLendXContractClient::new(&env, &contract_id);
+
+    let business1 = Address::generate(&env);
+    let business2 = Address::generate(&env);
+    let currency = Address::generate(&env);
+    let due_date = env.ledger().timestamp() + 86400;
+    let category = InvoiceCategory::Services;
+
+    // Create invoices with different tags
+    client.store_invoice(
+        &business1,
+        &1000,
+        &currency,
+        &due_date,
+        &String::from_str(&env, "Invoice 1"),
+        &category,
+        &vec![&env, String::from_str(&env, "urgent")],
+    );
+
+    client.store_invoice(
+        &business2,
+        &2000,
+        &currency,
+        &due_date,
+        &String::from_str(&env, "Invoice 2"),
+        &category,
+        &vec![&env, String::from_str(&env, "urgent"), String::from_str(&env, "consulting")],
+    );
+
+    client.store_invoice(
+        &business1,
+        &3000,
+        &currency,
+        &due_date,
+        &String::from_str(&env, "Invoice 3"),
+        &category,
+        &vec![&env, String::from_str(&env, "consulting")],
+    );
+
+    // Get invoices by tag
+    let urgent_invoices = client.get_invoices_by_tag(&String::from_str(&env, "urgent"));
+    let consulting_invoices = client.get_invoices_by_tag(&String::from_str(&env, "consulting"));
+
+    assert_eq!(urgent_invoices.len(), 2);
+    assert_eq!(consulting_invoices.len(), 2);
+}
+
+#[test]
+fn test_get_invoices_by_tags() {
+    let env = Env::default();
+    let contract_id = env.register_contract(None, QuickLendXContract);
+    let client = QuickLendXContractClient::new(&env, &contract_id);
+
+    let business1 = Address::generate(&env);
+    let business2 = Address::generate(&env);
+    let currency = Address::generate(&env);
+    let due_date = env.ledger().timestamp() + 86400;
+    let category = InvoiceCategory::Services;
+
+    // Create invoices with different tag combinations
+    client.store_invoice(
+        &business1,
+        &1000,
+        &currency,
+        &due_date,
+        &String::from_str(&env, "Invoice 1"),
+        &category,
+        &vec![&env, String::from_str(&env, "urgent"), String::from_str(&env, "consulting")],
+    );
+
+    client.store_invoice(
+        &business2,
+        &2000,
+        &currency,
+        &due_date,
+        &String::from_str(&env, "Invoice 2"),
+        &category,
+        &vec![&env, String::from_str(&env, "urgent")],
+    );
+
+    client.store_invoice(
+        &business1,
+        &3000,
+        &currency,
+        &due_date,
+        &String::from_str(&env, "Invoice 3"),
+        &category,
+        &vec![&env, String::from_str(&env, "consulting")],
+    );
+
+    // Get invoices by multiple tags (AND logic)
+    let tags = vec![&env, String::from_str(&env, "urgent"), String::from_str(&env, "consulting")];
+    let filtered_invoices = client.get_invoices_by_tags(&tags);
+
+    assert_eq!(filtered_invoices.len(), 1); // Only invoice 1 has both tags
+}
+
+#[test]
+fn test_get_all_categories() {
+    let env = Env::default();
+    let contract_id = env.register_contract(None, QuickLendXContract);
+    let client = QuickLendXContractClient::new(&env, &contract_id);
+
+    let categories = client.get_all_categories();
+    assert_eq!(categories.len(), 7); // All 7 categories should be returned
+
+    // Verify all expected categories are present
+    let expected_categories = [
+        InvoiceCategory::Services,
+        InvoiceCategory::Products,
+        InvoiceCategory::Consulting,
+        InvoiceCategory::Manufacturing,
+        InvoiceCategory::Technology,
+        InvoiceCategory::Healthcare,
+        InvoiceCategory::Other,
+    ];
+
+    for expected_category in expected_categories.iter() {
+        assert!(categories.contains(expected_category));
+    }
+}
+
+#[test]
+fn test_category_count_functions() {
+    let env = Env::default();
+    let contract_id = env.register_contract(None, QuickLendXContract);
+    let client = QuickLendXContractClient::new(&env, &contract_id);
+
+    let business = Address::generate(&env);
+    let currency = Address::generate(&env);
+    let due_date = env.ledger().timestamp() + 86400;
+    let tags = vec![&env, String::from_str(&env, "test")];
+
+    // Create invoices in different categories
+    client.store_invoice(
+        &business,
+        &1000,
+        &currency,
+        &due_date,
+        &String::from_str(&env, "Services invoice"),
+        &InvoiceCategory::Services,
+        &tags,
+    );
+
+    client.store_invoice(
+        &business,
+        &2000,
+        &currency,
+        &due_date,
+        &String::from_str(&env, "Products invoice"),
+        &InvoiceCategory::Products,
+        &tags,
+    );
+
+    client.store_invoice(
+        &business,
+        &3000,
+        &currency,
+        &due_date,
+        &String::from_str(&env, "Another services invoice"),
+        &InvoiceCategory::Services,
+        &tags,
+    );
+
+    // Test count functions
+    assert_eq!(client.get_invoice_count_by_category(&InvoiceCategory::Services), 2);
+    assert_eq!(client.get_invoice_count_by_category(&InvoiceCategory::Products), 1);
+    assert_eq!(client.get_invoice_count_by_tag(&String::from_str(&env, "test")), 3);
 }
